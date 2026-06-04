@@ -80,6 +80,13 @@ function scoreRegular(state: EmployeeState): number {
   return state.compensationUnits * 20 + state.consecutiveWorkDays * 1
 }
 
+// Subtracted from score when the candidate worked the same shift yesterday.
+// Creates ~3-day blocks instead of daily alternation between teammates.
+// Overnight (+0.5 comp/day × 20 = 10 pts/day): bonus 22 → person holds slot ~2-3 days before switching.
+// Night (+0.25 comp/day × 20 = 5 pts/day):  bonus 12 → person holds slot ~2-3 days before switching.
+const OVERNIGHT_CONTINUITY_BONUS = 22
+const NIGHT_CONTINUITY_BONUS = 12
+
 export function generateSchedule(params: ScheduleParams): MonthSchedule {
   const { year, month, employees, teams } = params
   const req = params.shiftRequirements ?? DEFAULT_SHIFT_REQUIREMENTS
@@ -165,6 +172,14 @@ export function generateSchedule(params: ScheduleParams): MonthSchedule {
         ? req.saturday.overnight
         : req.normalDay.overnight
 
+    const scoreOvernight = (e: ScheduleEmployee) => {
+      const s = stateMap.get(e.id)!
+      return (
+        scoreRegular(s) -
+        (s.lastShift === "Overnight" ? OVERNIGHT_CONTINUITY_BONUS : 0)
+      )
+    }
+
     for (let i = 0; i < overnightCount; i++) {
       const unassigned = shiftPool.filter((e) => !assigned.has(e.id))
 
@@ -182,19 +197,13 @@ export function generateSchedule(params: ScheduleParams): MonthSchedule {
       if (isNormalDay && usedTeamsForNightSlots.size < teams.length) {
         const sorted = [...candidatePool]
           .filter((e) => !usedTeamsForNightSlots.has(e.teamId))
-          .sort(
-            (a, b) =>
-              scoreRegular(stateMap.get(a.id)!) -
-              scoreRegular(stateMap.get(b.id)!)
-          )
+          .sort((a, b) => scoreOvernight(a) - scoreOvernight(b))
         pick = sorted[0]
       }
       // Fallback (no diversity constraint or couldn't satisfy it)
       if (!pick) {
         const sorted = [...candidatePool].sort(
-          (a, b) =>
-            scoreRegular(stateMap.get(a.id)!) -
-            scoreRegular(stateMap.get(b.id)!)
+          (a, b) => scoreOvernight(a) - scoreOvernight(b)
         )
         pick = sorted[0]
       }
@@ -213,6 +222,13 @@ export function generateSchedule(params: ScheduleParams): MonthSchedule {
         ? req.saturday.night
         : req.normalDay.night
 
+    const scoreNight = (e: ScheduleEmployee) => {
+      const s = stateMap.get(e.id)!
+      return (
+        scoreRegular(s) - (s.lastShift === "Night" ? NIGHT_CONTINUITY_BONUS : 0)
+      )
+    }
+
     for (let i = 0; i < nightCount; i++) {
       const unassigned = shiftPool.filter((e) => !assigned.has(e.id))
 
@@ -221,18 +237,12 @@ export function generateSchedule(params: ScheduleParams): MonthSchedule {
         // Enforce team diversity: pick from teams not yet used for night/overnight.
         const sorted = [...unassigned]
           .filter((e) => !usedTeamsForNightSlots.has(e.teamId))
-          .sort(
-            (a, b) =>
-              scoreRegular(stateMap.get(a.id)!) -
-              scoreRegular(stateMap.get(b.id)!)
-          )
+          .sort((a, b) => scoreNight(a) - scoreNight(b))
         pick = sorted[0]
       }
       if (!pick) {
         const sorted = [...unassigned].sort(
-          (a, b) =>
-            scoreRegular(stateMap.get(a.id)!) -
-            scoreRegular(stateMap.get(b.id)!)
+          (a, b) => scoreNight(a) - scoreNight(b)
         )
         pick = sorted[0]
       }
