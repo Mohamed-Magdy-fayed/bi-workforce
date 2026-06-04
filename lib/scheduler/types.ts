@@ -15,11 +15,26 @@ export interface ScheduleEmployee {
   role: Role
 }
 
+export interface ShiftRequirements {
+  normalDay: { overnight: number; night: number }
+  // morning = regulars only; on Friday/Saturday the rotating leader is always additional
+  friday: { overnight: number; night: number; morning: number }
+  saturday: { overnight: number; night: number; morning: number }
+}
+
+export const DEFAULT_SHIFT_REQUIREMENTS: ShiftRequirements = {
+  normalDay: { overnight: 1, night: 2 },
+  friday: { overnight: 1, night: 1, morning: 2 },
+  // Leader is extra; 2 regulars in morning on Saturday
+  saturday: { overnight: 1, night: 1, morning: 2 },
+}
+
 export interface ScheduleParams {
   year: number
   month: number
   employees: ScheduleEmployee[]
   teams: ScheduleTeam[]
+  shiftRequirements?: ShiftRequirements
 }
 
 export interface ShiftAssignment {

@@ -11,6 +11,7 @@ import type {
   MonthSchedule,
   ScheduleEmployee,
   ScheduleTeam,
+  ShiftRequirements,
 } from "@/lib/scheduler/types"
 import { useEmployees } from "@/hooks/useEmployees"
 import { useTeams } from "@/hooks/useTeams"
@@ -76,7 +77,11 @@ export default function Page() {
       role: e.role as ScheduleEmployee["role"],
     }))
 
-  const handleGenerate = (year: number, month: number) => {
+  const handleGenerate = (
+    year: number,
+    month: number,
+    requirements: ShiftRequirements
+  ) => {
     setGenerating(true)
     setSavedId(null)
     try {
@@ -85,6 +90,7 @@ export default function Page() {
         month,
         employees: scheduleEmployees,
         teams: scheduleTeams,
+        shiftRequirements: requirements,
       })
       setGeneratedSchedule(schedule)
     } finally {

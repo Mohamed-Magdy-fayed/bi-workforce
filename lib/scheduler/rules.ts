@@ -2,8 +2,10 @@ import type {
   DaySchedule,
   ScheduleEmployee,
   ScheduleTeam,
+  ShiftRequirements,
   ShiftType,
 } from "./types"
+import { DEFAULT_SHIFT_REQUIREMENTS } from "./types"
 
 export type DayType = "normal" | "friday" | "saturday"
 
@@ -74,7 +76,8 @@ export function getSaturdayLeaderRotation(
 export function validateDay(
   day: DaySchedule,
   employees: ScheduleEmployee[],
-  teams: ScheduleTeam[]
+  teams: ScheduleTeam[],
+  requirements: ShiftRequirements = DEFAULT_SHIFT_REQUIREMENTS
 ): string[] {
   const violations: string[] = []
   const assignmentMap = new Map(
@@ -106,15 +109,25 @@ export function validateDay(
     )
   }
 
-  // Overnight: exactly 1 every day
-  if (overnight.length !== 1) {
-    violations.push(`Overnight count must be 1 (got ${overnight.length})`)
+  // Overnight: required count per day type
+  const expectedOvernight = day.isFriday
+    ? requirements.friday.overnight
+    : day.isSaturday
+      ? requirements.saturday.overnight
+      : requirements.normalDay.overnight
+  if (overnight.length !== expectedOvernight) {
+    violations.push(
+      `Overnight count must be ${expectedOvernight} (got ${overnight.length})`
+    )
   }
 
   if (!day.isFriday && !day.isSaturday) {
     // Normal day (Sun–Thu)
-    if (night.length !== 2) {
-      violations.push(`Night count must be 2 on workdays (got ${night.length})`)
+    const expectedNight = requirements.normalDay.night
+    if (night.length !== expectedNight) {
+      violations.push(
+        `Night count must be ${expectedNight} on workdays (got ${night.length})`
+      )
     }
     // Team diversity: overnight + 2 night must each be from a different team
     const slots = [...overnight, ...night]
@@ -127,14 +140,16 @@ export function validateDay(
   }
 
   if (day.isFriday) {
-    if (night.length !== 1) {
-      violations.push(`Night count must be 1 on Friday (got ${night.length})`)
-    }
-    // Friday morning = regulars only (leaders are off)
-    const regularMorning = morning.filter((e) => e.role === "regular")
-    if (regularMorning.length !== 2) {
+    if (night.length !== requirements.friday.night) {
       violations.push(
-        `Friday morning must have 2 regular members (got ${regularMorning.length})`
+        `Night count must be ${requirements.friday.night} on Friday (got ${night.length})`
+      )
+    }
+    // Friday morning = regulars only (leaders are off); leader is never counted
+    const regularMorning = morning.filter((e) => e.role === "regular")
+    if (regularMorning.length !== requirements.friday.morning) {
+      violations.push(
+        `Friday morning must have ${requirements.friday.morning} regular member(s) (got ${regularMorning.length})`
       )
     }
     const hasSenior = regularMorning.some(
@@ -148,10 +163,13 @@ export function validateDay(
   }
 
   if (day.isSaturday) {
-    if (night.length !== 1) {
-      violations.push(`Night count must be 1 on Saturday (got ${night.length})`)
+    if (night.length !== requirements.saturday.night) {
+      violations.push(
+        `Night count must be ${requirements.saturday.night} on Saturday (got ${night.length})`
+      )
     }
-    // Saturday morning = 1 rotating leader + 1 regular = 2 total
+    // Saturday morning = 1 rotating leader + req.saturday.morning regulars
+    // Leader is always extra — not counted in the regular morning requirement
     const leaderMorning = morning.filter((e) => e.role === "team_leader")
     const regularMorning = morning.filter((e) => e.role === "regular")
     if (leaderMorning.length !== 1) {
@@ -159,9 +177,9 @@ export function validateDay(
         `Saturday morning must include exactly 1 team leader (got ${leaderMorning.length})`
       )
     }
-    if (regularMorning.length !== 1) {
+    if (regularMorning.length !== requirements.saturday.morning) {
       violations.push(
-        `Saturday morning must include exactly 1 regular member (got ${regularMorning.length})`
+        `Saturday morning must include exactly ${requirements.saturday.morning} regular member(s) (got ${regularMorning.length})`
       )
     }
     const hasSenior = regularMorning.some(
