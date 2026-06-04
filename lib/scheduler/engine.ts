@@ -198,7 +198,13 @@ export function generateSchedule(params: ScheduleParams): MonthSchedule {
         : teamSaturdayDoubleCount
 
       // The team with the fewest accumulated extra slots becomes the double team.
-      const doubleTeamId = [...teams].sort(
+      // Only consider teams that actually have 2+ available regulars so the extra slot can be filled.
+      const teamsWithCapacity = teams.filter(
+        (t) => shiftPool.filter((e) => e.teamId === t.id).length >= 2
+      )
+      const doublePool =
+        teamsWithCapacity.length > 0 ? teamsWithCapacity : teams
+      const doubleTeamId = [...doublePool].sort(
         (a, b) =>
           (doubleCountMap.get(a.id) ?? 0) - (doubleCountMap.get(b.id) ?? 0)
       )[0].id
@@ -225,6 +231,18 @@ export function generateSchedule(params: ScheduleParams): MonthSchedule {
         )[0]
       if (extraFromDouble) pool4.push(extraFromDouble)
 
+      // Penalise picking the last mid/senior from pool4 for OVN/NGT so morning keeps at least one.
+      const weekendSeniorPenalty = (e: ScheduleEmployee): number => {
+        if (e.seniority !== "mid" && e.seniority !== "senior") return 0
+        const otherSeniors = pool4.filter(
+          (p) =>
+            p.id !== e.id &&
+            !assigned.has(p.id) &&
+            (p.seniority === "mid" || p.seniority === "senior")
+        ).length
+        return otherSeniors === 0 ? 10000 : 0
+      }
+
       // Assign OVN from pool4 (safety: skip those who worked Night yesterday)
       const overnightCount = isFriday
         ? req.friday.overnight
@@ -236,7 +254,10 @@ export function generateSchedule(params: ScheduleParams): MonthSchedule {
         )
         const candidates = safe.length > 0 ? safe : unassigned
         const pick = [...candidates].sort(
-          (a, b) => scoreOvernight(a) - scoreOvernight(b)
+          (a, b) =>
+            scoreOvernight(a) +
+            weekendSeniorPenalty(a) -
+            (scoreOvernight(b) + weekendSeniorPenalty(b))
         )[0]
         if (pick) {
           assignments.push({ employeeId: pick.id, shiftType: "Overnight" })
@@ -249,7 +270,10 @@ export function generateSchedule(params: ScheduleParams): MonthSchedule {
       for (let i = 0; i < nightCount; i++) {
         const candidates = pool4.filter((e) => !assigned.has(e.id))
         const pick = [...candidates].sort(
-          (a, b) => scoreNight(a) - scoreNight(b)
+          (a, b) =>
+            scoreNight(a) +
+            weekendSeniorPenalty(a) -
+            (scoreNight(b) + weekendSeniorPenalty(b))
         )[0]
         if (pick) {
           assignments.push({ employeeId: pick.id, shiftType: "Night" })
@@ -290,7 +314,10 @@ export function generateSchedule(params: ScheduleParams): MonthSchedule {
       }
 
       // Rotate the double team: increment its count so a different team gets it next
-      doubleCountMap.set(doubleTeamId, (doubleCountMap.get(doubleTeamId) ?? 0) + 1)
+      doubleCountMap.set(
+        doubleTeamId,
+        (doubleCountMap.get(doubleTeamId) ?? 0) + 1
+      )
     } else {
       // ── NORMAL DAY: slot-first assignment ───────────────────────────────────
 
