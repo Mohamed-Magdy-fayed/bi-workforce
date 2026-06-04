@@ -1,4 +1,9 @@
-import type { DaySchedule, ScheduleEmployee, ScheduleTeam, ShiftType } from "./types"
+import type {
+  DaySchedule,
+  ScheduleEmployee,
+  ScheduleTeam,
+  ShiftType,
+} from "./types"
 
 export type DayType = "normal" | "friday" | "saturday"
 
@@ -28,7 +33,11 @@ export function buildMonthDays(year: number, month: number): DayInfo[] {
 
     const isFriday = dow === 5
     const isSaturday = dow === 6
-    const type: DayType = isFriday ? "friday" : isSaturday ? "saturday" : "normal"
+    const type: DayType = isFriday
+      ? "friday"
+      : isSaturday
+        ? "saturday"
+        : "normal"
 
     const mm = String(month).padStart(2, "0")
     const dd = String(d).padStart(2, "0")
@@ -49,7 +58,7 @@ export function buildMonthDays(year: number, month: number): DayInfo[] {
 
 export function getSaturdayLeaderRotation(
   days: DayInfo[],
-  employees: ScheduleEmployee[],
+  employees: ScheduleEmployee[]
 ): Map<number, string> {
   const leaders = employees.filter((e) => e.role === "team_leader")
   if (leaders.length === 0) return new Map()
@@ -65,10 +74,12 @@ export function getSaturdayLeaderRotation(
 export function validateDay(
   day: DaySchedule,
   employees: ScheduleEmployee[],
-  teams: ScheduleTeam[],
+  teams: ScheduleTeam[]
 ): string[] {
   const violations: string[] = []
-  const assignmentMap = new Map(day.assignments.map((a) => [a.employeeId, a.shiftType]))
+  const assignmentMap = new Map(
+    day.assignments.map((a) => [a.employeeId, a.shiftType])
+  )
   const empMap = new Map(employees.map((e) => [e.id, e]))
 
   const byShift = (shift: ShiftType) =>
@@ -81,21 +92,37 @@ export function validateDay(
   const night = byShift("Night")
   const morning = byShift("Morning")
 
+  // Leaders must never appear in Night or Overnight shifts
+  const leadersInNight = night.filter((e) => e.role === "team_leader")
+  if (leadersInNight.length > 0) {
+    violations.push(
+      `Team leader(s) incorrectly assigned to Night: ${leadersInNight.map((e) => e.name).join(", ")}`
+    )
+  }
+  const leadersInOvernight = overnight.filter((e) => e.role === "team_leader")
+  if (leadersInOvernight.length > 0) {
+    violations.push(
+      `Team leader(s) incorrectly assigned to Overnight: ${leadersInOvernight.map((e) => e.name).join(", ")}`
+    )
+  }
+
   // Overnight: exactly 1 every day
   if (overnight.length !== 1) {
     violations.push(`Overnight count must be 1 (got ${overnight.length})`)
   }
 
-  if (day.dayOfWeek >= 0 && !day.isFriday && !day.isSaturday) {
+  if (!day.isFriday && !day.isSaturday) {
     // Normal day (Sun–Thu)
     if (night.length !== 2) {
       violations.push(`Night count must be 2 on workdays (got ${night.length})`)
     }
-    // Team diversity: all 3 slots from different teams
+    // Team diversity: overnight + 2 night must each be from a different team
     const slots = [...overnight, ...night]
     const usedTeams = new Set(slots.map((e) => e.teamId))
     if (usedTeams.size < Math.min(3, teams.length) && slots.length >= 3) {
-      violations.push(`Overnight+Night slots must cover all teams (only ${usedTeams.size} team(s))`)
+      violations.push(
+        `Overnight+Night slots must cover all teams (only ${usedTeams.size} team(s))`
+      )
     }
   }
 
@@ -103,12 +130,20 @@ export function validateDay(
     if (night.length !== 1) {
       violations.push(`Night count must be 1 on Friday (got ${night.length})`)
     }
-    if (morning.length !== 2) {
-      violations.push(`Morning count must be 2 on Friday (got ${morning.length})`)
+    // Friday morning = regulars only (leaders are off)
+    const regularMorning = morning.filter((e) => e.role === "regular")
+    if (regularMorning.length !== 2) {
+      violations.push(
+        `Friday morning must have 2 regular members (got ${regularMorning.length})`
+      )
     }
-    const hasSenior = morning.some((e) => e.seniority === "mid" || e.seniority === "senior")
-    if (morning.length > 0 && !hasSenior) {
-      violations.push("Friday morning must include at least 1 mid/senior employee")
+    const hasSenior = regularMorning.some(
+      (e) => e.seniority === "mid" || e.seniority === "senior"
+    )
+    if (regularMorning.length > 0 && !hasSenior) {
+      violations.push(
+        "Friday morning must include at least 1 mid/senior regular"
+      )
     }
   }
 
@@ -116,16 +151,24 @@ export function validateDay(
     if (night.length !== 1) {
       violations.push(`Night count must be 1 on Saturday (got ${night.length})`)
     }
-    if (morning.length !== 2) {
-      violations.push(`Morning count must be 2 on Saturday (got ${morning.length})`)
+    // Saturday morning = 1 rotating leader + 1 regular = 2 total
+    const leaderMorning = morning.filter((e) => e.role === "team_leader")
+    const regularMorning = morning.filter((e) => e.role === "regular")
+    if (leaderMorning.length !== 1) {
+      violations.push(
+        `Saturday morning must include exactly 1 team leader (got ${leaderMorning.length})`
+      )
     }
-    const hasSenior = morning.some((e) => e.seniority === "mid" || e.seniority === "senior")
-    if (morning.length > 0 && !hasSenior) {
-      violations.push("Saturday morning must include at least 1 mid/senior employee")
+    if (regularMorning.length !== 1) {
+      violations.push(
+        `Saturday morning must include exactly 1 regular member (got ${regularMorning.length})`
+      )
     }
-    const hasLeader = morning.some((e) => e.role === "team_leader")
-    if (morning.length > 0 && !hasLeader) {
-      violations.push("Saturday morning must include the rotating team leader")
+    const hasSenior = regularMorning.some(
+      (e) => e.seniority === "mid" || e.seniority === "senior"
+    )
+    if (regularMorning.length > 0 && !hasSenior) {
+      violations.push("Saturday morning regular must be mid/senior level")
     }
   }
 

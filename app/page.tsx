@@ -7,7 +7,11 @@ import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
 import { generateSchedule } from "@/lib/scheduler/engine"
-import type { MonthSchedule, ScheduleEmployee, ScheduleTeam } from "@/lib/scheduler/types"
+import type {
+  MonthSchedule,
+  ScheduleEmployee,
+  ScheduleTeam,
+} from "@/lib/scheduler/types"
 import { useEmployees } from "@/hooks/useEmployees"
 import { useTeams } from "@/hooks/useTeams"
 import { useScheduleList } from "@/hooks/useSchedules"
@@ -19,8 +23,18 @@ import { TeamManager } from "@/components/scheduler/TeamManager"
 import { EmployeeManager } from "@/components/scheduler/EmployeeManager"
 
 const MONTH_NAMES = [
-  "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December",
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
 ]
 
 export default function Page() {
@@ -28,31 +42,50 @@ export default function Page() {
   const employeesHook = useEmployees()
   const schedulesHook = useScheduleList()
 
-  const [generatedSchedule, setGeneratedSchedule] = useState<MonthSchedule | null>(null)
+  const [generatedSchedule, setGeneratedSchedule] =
+    useState<MonthSchedule | null>(null)
   const [generating, setGenerating] = useState(false)
   const [saving, setSaving] = useState(false)
   const [savedId, setSavedId] = useState<string | null>(null)
-  const [viewingSchedule, setViewingSchedule] = useState<MonthSchedule | null>(null)
+  const [viewingSchedule, setViewingSchedule] = useState<MonthSchedule | null>(
+    null
+  )
   const [loadingHistory, setLoadingHistory] = useState(false)
-
-  const scheduleEmployees: ScheduleEmployee[] = employeesHook.employees.map((e) => ({
-    id: e.id,
-    name: e.name,
-    teamId: e.teamId ?? "",
-    seniority: e.seniority as ScheduleEmployee["seniority"],
-    role: e.role as ScheduleEmployee["role"],
-  }))
 
   const scheduleTeams: ScheduleTeam[] = teamsHook.teams.map((t) => ({
     id: t.id,
     name: t.name,
   }))
 
+  const teamNameMap = new Map(scheduleTeams.map((t) => [t.id, t.name]))
+
+  // Sort: by team name → leaders first within team → alphabetical by name
+  const scheduleEmployees: ScheduleEmployee[] = [...employeesHook.employees]
+    .sort((a, b) => {
+      const ta = teamNameMap.get(a.teamId ?? "") ?? ""
+      const tb = teamNameMap.get(b.teamId ?? "") ?? ""
+      if (ta !== tb) return ta.localeCompare(tb)
+      if (a.role !== b.role) return a.role === "team_leader" ? -1 : 1
+      return a.name.localeCompare(b.name)
+    })
+    .map((e) => ({
+      id: e.id,
+      name: e.name,
+      teamId: e.teamId ?? "",
+      seniority: e.seniority as ScheduleEmployee["seniority"],
+      role: e.role as ScheduleEmployee["role"],
+    }))
+
   const handleGenerate = (year: number, month: number) => {
     setGenerating(true)
     setSavedId(null)
     try {
-      const schedule = generateSchedule({ year, month, employees: scheduleEmployees, teams: scheduleTeams })
+      const schedule = generateSchedule({
+        year,
+        month,
+        employees: scheduleEmployees,
+        teams: scheduleTeams,
+      })
       setGeneratedSchedule(schedule)
     } finally {
       setGenerating(false)
@@ -91,13 +124,15 @@ export default function Page() {
       const data = await res.json()
 
       // Reconstruct MonthSchedule from API response
-      const employees: ScheduleEmployee[] = data.employees.map((e: ScheduleEmployee) => ({
-        id: e.id,
-        name: e.name,
-        teamId: e.teamId ?? "",
-        seniority: e.seniority,
-        role: e.role,
-      }))
+      const employees: ScheduleEmployee[] = data.employees.map(
+        (e: ScheduleEmployee) => ({
+          id: e.id,
+          name: e.name,
+          teamId: e.teamId ?? "",
+          seniority: e.seniority,
+          role: e.role,
+        })
+      )
 
       const teams: ScheduleTeam[] = data.teams.map((t: ScheduleTeam) => ({
         id: t.id,
@@ -116,7 +151,9 @@ export default function Page() {
         const dayOfWeek = dt.getDay()
         const isFriday = dayOfWeek === 5
         const isSaturday = dayOfWeek === 6
-        const dayData = data.days.find((x: { date: string }) => x.date === dateStr)
+        const dayData = data.days.find(
+          (x: { date: string }) => x.date === dateStr
+        )
 
         days.push({
           date: dateStr,
@@ -159,7 +196,9 @@ export default function Page() {
         {/* Header */}
         <div className="mb-6">
           <h1 className="text-base font-semibold">Workforce Scheduler</h1>
-          <p className="text-xs text-muted-foreground">Generate and manage monthly shift schedules</p>
+          <p className="text-xs text-muted-foreground">
+            Generate and manage monthly shift schedules
+          </p>
         </div>
 
         <Tabs defaultValue="generate">
@@ -195,13 +234,19 @@ export default function Page() {
                       disabled={saving || !!savedId}
                       variant={savedId ? "secondary" : "default"}
                     >
-                      {savedId ? "Saved ✓" : saving ? "Saving…" : "Save Schedule"}
+                      {savedId
+                        ? "Saved ✓"
+                        : saving
+                          ? "Saving…"
+                          : "Save Schedule"}
                     </Button>
                     <ExportButton schedule={generatedSchedule} />
                     {generatedSchedule.hasViolations && (
                       <Badge variant="destructive" className="text-xs">
                         {generatedSchedule.summary.totalViolations} violation
-                        {generatedSchedule.summary.totalViolations !== 1 ? "s" : ""}
+                        {generatedSchedule.summary.totalViolations !== 1
+                          ? "s"
+                          : ""}
                       </Badge>
                     )}
                   </div>
@@ -212,35 +257,73 @@ export default function Page() {
                   {/* Balance summary */}
                   <Separator />
                   <div className="space-y-2">
-                    <p className="text-xs font-medium text-muted-foreground">Balance Summary</p>
+                    <p className="text-xs font-medium text-muted-foreground">
+                      Balance Summary
+                    </p>
                     <div className="overflow-x-auto">
                       <table className="min-w-full text-xs">
                         <thead>
                           <tr className="border-b">
-                            <th className="pb-1 pr-4 text-left font-medium text-muted-foreground">Employee</th>
-                            <th className="pb-1 px-2 text-center font-medium text-muted-foreground">Morning</th>
-                            <th className="pb-1 px-2 text-center font-medium text-muted-foreground">Night</th>
-                            <th className="pb-1 px-2 text-center font-medium text-muted-foreground">Overnight</th>
-                            <th className="pb-1 px-2 text-center font-medium text-muted-foreground">Fridays</th>
-                            <th className="pb-1 px-2 text-center font-medium text-muted-foreground">Saturdays</th>
-                            <th className="pb-1 px-2 text-center font-medium text-muted-foreground">Off</th>
-                            <th className="pb-1 pl-2 text-center font-medium text-muted-foreground">Total Worked</th>
+                            <th className="pr-4 pb-1 text-left font-medium text-muted-foreground">
+                              Employee
+                            </th>
+                            <th className="px-2 pb-1 text-center font-medium text-muted-foreground">
+                              Morning
+                            </th>
+                            <th className="px-2 pb-1 text-center font-medium text-muted-foreground">
+                              Night
+                            </th>
+                            <th className="px-2 pb-1 text-center font-medium text-muted-foreground">
+                              Overnight
+                            </th>
+                            <th className="px-2 pb-1 text-center font-medium text-muted-foreground">
+                              Fridays
+                            </th>
+                            <th className="px-2 pb-1 text-center font-medium text-muted-foreground">
+                              Saturdays
+                            </th>
+                            <th className="px-2 pb-1 text-center font-medium text-muted-foreground">
+                              Off
+                            </th>
+                            <th className="pb-1 pl-2 text-center font-medium text-muted-foreground">
+                              Total Worked
+                            </th>
                           </tr>
                         </thead>
                         <tbody>
                           {generatedSchedule.employees.map((emp) => {
-                            const stats = generatedSchedule.summary.employeeStats[emp.id]
+                            const stats =
+                              generatedSchedule.summary.employeeStats[emp.id]
                             if (!stats) return null
                             return (
-                              <tr key={emp.id} className="border-b last:border-0">
-                                <td className="py-1 pr-4 font-medium">{emp.name}</td>
-                                <td className="py-1 px-2 text-center">{stats.morning}</td>
-                                <td className="py-1 px-2 text-center">{stats.night}</td>
-                                <td className="py-1 px-2 text-center">{stats.overnight}</td>
-                                <td className="py-1 px-2 text-center">{stats.friday}</td>
-                                <td className="py-1 px-2 text-center">{stats.saturday}</td>
-                                <td className="py-1 px-2 text-center">{stats.off + stats.compOff}</td>
-                                <td className="py-1 pl-2 text-center font-medium">{stats.totalWorked}</td>
+                              <tr
+                                key={emp.id}
+                                className="border-b last:border-0"
+                              >
+                                <td className="py-1 pr-4 font-medium">
+                                  {emp.name}
+                                </td>
+                                <td className="px-2 py-1 text-center">
+                                  {stats.morning}
+                                </td>
+                                <td className="px-2 py-1 text-center">
+                                  {stats.night}
+                                </td>
+                                <td className="px-2 py-1 text-center">
+                                  {stats.overnight}
+                                </td>
+                                <td className="px-2 py-1 text-center">
+                                  {stats.friday}
+                                </td>
+                                <td className="px-2 py-1 text-center">
+                                  {stats.saturday}
+                                </td>
+                                <td className="px-2 py-1 text-center">
+                                  {stats.off + stats.compOff}
+                                </td>
+                                <td className="py-1 pl-2 text-center font-medium">
+                                  {stats.totalWorked}
+                                </td>
                               </tr>
                             )
                           })}
@@ -257,7 +340,9 @@ export default function Page() {
           <TabsContent value="history">
             <div className="space-y-4">
               {schedulesHook.schedules.length === 0 && (
-                <p className="text-xs text-muted-foreground">No saved schedules yet.</p>
+                <p className="text-xs text-muted-foreground">
+                  No saved schedules yet.
+                </p>
               )}
 
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -267,27 +352,39 @@ export default function Page() {
                     className={`cursor-pointer transition-colors hover:bg-muted/30 ${viewingSchedule?.id === s.id ? "ring-2 ring-ring" : ""}`}
                     onClick={() => handleLoadHistory(s.id)}
                   >
-                    <CardHeader className="pb-2 pt-3">
+                    <CardHeader className="pt-3 pb-2">
                       <CardTitle className="flex items-center justify-between text-xs">
                         <span>
                           {MONTH_NAMES[s.month - 1]} {s.year}
                         </span>
                         {s.hasViolations ? (
-                          <Badge variant="destructive" className="text-[0.6rem]">violations</Badge>
+                          <Badge
+                            variant="destructive"
+                            className="text-[0.6rem]"
+                          >
+                            violations
+                          </Badge>
                         ) : (
-                          <Badge variant="secondary" className="text-[0.6rem]">✓ clean</Badge>
+                          <Badge variant="secondary" className="text-[0.6rem]">
+                            ✓ clean
+                          </Badge>
                         )}
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="pb-3">
                       <p className="text-[0.65rem] text-muted-foreground">
-                        {s.generatedAt ? new Date(s.generatedAt).toLocaleDateString() : ""}
+                        {s.generatedAt
+                          ? new Date(s.generatedAt).toLocaleDateString()
+                          : ""}
                       </p>
                       <Button
                         size="xs"
                         variant="destructive"
                         className="mt-2"
-                        onClick={(e) => { e.stopPropagation(); handleDeleteHistory(s.id) }}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleDeleteHistory(s.id)
+                        }}
                       >
                         Delete
                       </Button>
@@ -301,9 +398,14 @@ export default function Page() {
                   <Separator />
                   <div className="flex items-center gap-2">
                     <h2 className="text-xs font-medium">
-                      {MONTH_NAMES[viewingSchedule.month - 1]} {viewingSchedule.year}
+                      {MONTH_NAMES[viewingSchedule.month - 1]}{" "}
+                      {viewingSchedule.year}
                     </h2>
-                    {loadingHistory && <span className="text-xs text-muted-foreground">Loading…</span>}
+                    {loadingHistory && (
+                      <span className="text-xs text-muted-foreground">
+                        Loading…
+                      </span>
+                    )}
                     <ExportButton schedule={viewingSchedule} />
                   </div>
                   <ScheduleGrid schedule={viewingSchedule} />
