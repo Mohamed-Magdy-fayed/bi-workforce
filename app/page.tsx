@@ -285,8 +285,11 @@ export default function Page() {
                             <th className="px-2 pb-1 text-center font-medium text-muted-foreground">
                               Off
                             </th>
-                            <th className="pb-1 pl-2 text-center font-medium text-muted-foreground">
+                            <th className="px-2 pb-1 text-center font-medium text-muted-foreground">
                               Total Worked
+                            </th>
+                            <th className="pb-1 pl-2 text-center font-medium text-muted-foreground">
+                              Comp. Units
                             </th>
                           </tr>
                         </thead>
@@ -321,8 +324,11 @@ export default function Page() {
                                 <td className="px-2 py-1 text-center">
                                   {stats.off + stats.compOff}
                                 </td>
-                                <td className="py-1 pl-2 text-center font-medium">
+                                <td className="px-2 py-1 text-center font-medium">
                                   {stats.totalWorked}
+                                </td>
+                                <td className="py-1 pl-2 text-center font-medium tabular-nums">
+                                  {stats.compensationUnits.toFixed(2)}
                                 </td>
                               </tr>
                             )

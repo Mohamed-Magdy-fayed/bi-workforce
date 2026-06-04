@@ -46,6 +46,7 @@ export interface EmployeeWorkSummary {
   friday: number
   saturday: number
   totalWorked: number
+  compensationUnits: number
 }
 
 export interface ScheduleSummary {
@@ -79,4 +80,6 @@ export interface EmployeeState {
   morningCount: number
   fridayCount: number
   saturdayCount: number
+  // compensation units earned (primary balance metric)
+  compensationUnits: number
 }
