@@ -103,6 +103,15 @@ export function generateSchedule(params: ScheduleParams): MonthSchedule {
   // the other taking the off slot). Used to rotate the off slot fairly.
   const teamDoubleCount = new Map<string, number>(teams.map((t) => [t.id, 0]))
 
+  // Tracks how many times each team has been the "double team" on weekends.
+  // The team with the fewest extra-member slots gets the double next time.
+  const teamFridayDoubleCount = new Map<string, number>(
+    teams.map((t) => [t.id, 0])
+  )
+  const teamSaturdayDoubleCount = new Map<string, number>(
+    teams.map((t) => [t.id, 0])
+  )
+
   for (const dayInfo of days) {
     const { dateStr, dayOfWeek, isFriday, isSaturday, weekIndex } = dayInfo
     const isNormalDay = !isFriday && !isSaturday
@@ -162,16 +171,7 @@ export function generateSchedule(params: ScheduleParams): MonthSchedule {
     // so the full non-forced pool is available for the best shift picks.
     const shiftPool = regulars.filter((e) => !forcedOffRegulars.has(e.id))
 
-    // Track which teams are committed to night/overnight (diversity constraint)
-    const usedTeamsForNightSlots = new Set<string>()
-
-    // ── STEP 4: Assign Overnight ─────────────────────────────────────────────
-    const overnightCount = isFriday
-      ? req.friday.overnight
-      : isSaturday
-        ? req.saturday.overnight
-        : req.normalDay.overnight
-
+    // Score helpers shared by both branches
     const scoreOvernight = (e: ScheduleEmployee) => {
       const s = stateMap.get(e.id)!
       return (
@@ -179,49 +179,6 @@ export function generateSchedule(params: ScheduleParams): MonthSchedule {
         (s.lastShift === "Overnight" ? OVERNIGHT_CONTINUITY_BONUS : 0)
       )
     }
-
-    for (let i = 0; i < overnightCount; i++) {
-      const unassigned = shiftPool.filter((e) => !assigned.has(e.id))
-
-      // Hard constraint: never assign Overnight to someone who worked Night yesterday.
-      // Night ends midnight; Overnight starts 3am — only 3h gap, physically unsafe.
-      const safePool = unassigned.filter(
-        (e) => stateMap.get(e.id)!.lastShift !== "Night"
-      )
-      // Fallback: if everyone worked night yesterday (edge case), use full pool.
-      const candidatePool = safePool.length > 0 ? safePool : unassigned
-
-      // On normal days, enforce team diversity: pick from teams not yet in night/overnight.
-      // Sort globally by compensation (lowest first) then pick first diversity-eligible.
-      let pick: ScheduleEmployee | undefined
-      if (isNormalDay && usedTeamsForNightSlots.size < teams.length) {
-        const sorted = [...candidatePool]
-          .filter((e) => !usedTeamsForNightSlots.has(e.teamId))
-          .sort((a, b) => scoreOvernight(a) - scoreOvernight(b))
-        pick = sorted[0]
-      }
-      // Fallback (no diversity constraint or couldn't satisfy it)
-      if (!pick) {
-        const sorted = [...candidatePool].sort(
-          (a, b) => scoreOvernight(a) - scoreOvernight(b)
-        )
-        pick = sorted[0]
-      }
-
-      if (pick) {
-        assignments.push({ employeeId: pick.id, shiftType: "Overnight" })
-        assigned.add(pick.id)
-        usedTeamsForNightSlots.add(pick.teamId)
-      }
-    }
-
-    // ── STEP 5: Assign Night shifts ──────────────────────────────────────────
-    const nightCount = isFriday
-      ? req.friday.night
-      : isSaturday
-        ? req.saturday.night
-        : req.normalDay.night
-
     const scoreNight = (e: ScheduleEmployee) => {
       const s = stateMap.get(e.id)!
       return (
@@ -229,77 +186,86 @@ export function generateSchedule(params: ScheduleParams): MonthSchedule {
       )
     }
 
-    for (let i = 0; i < nightCount; i++) {
-      const unassigned = shiftPool.filter((e) => !assigned.has(e.id))
-
-      let pick: ScheduleEmployee | undefined
-      if (isNormalDay && usedTeamsForNightSlots.size < teams.length) {
-        // Enforce team diversity: pick from teams not yet used for night/overnight.
-        const sorted = [...unassigned]
-          .filter((e) => !usedTeamsForNightSlots.has(e.teamId))
-          .sort((a, b) => scoreNight(a) - scoreNight(b))
-        pick = sorted[0]
-      }
-      if (!pick) {
-        const sorted = [...unassigned].sort(
-          (a, b) => scoreNight(a) - scoreNight(b)
-        )
-        pick = sorted[0]
-      }
-
-      if (pick) {
-        assignments.push({ employeeId: pick.id, shiftType: "Night" })
-        assigned.add(pick.id)
-        usedTeamsForNightSlots.add(pick.teamId)
-      }
-    }
-
-    // ── STEP 6: Select comp-off from morning candidates ──────────────────────
-    // Comp-offs are decided AFTER night/overnight, so they never pull the best
-    // candidates away from the high-compensation slots.
+    // forcedCompOffRegulars is declared here so Step 8 can access it on all day types
     const forcedCompOffRegulars = new Set<string>()
 
-    if (isNormalDay && forcedOffRegulars.size === 0) {
-      // Morning-bound regulars: non-forced, not yet assigned to night/overnight
-      const morningCandidates = shiftPool.filter((e) => !assigned.has(e.id))
+    if (isFriday || isSaturday) {
+      // ── WEEKEND: Team-balanced assignment ───────────────────────────────────
+      // Goal: exactly 1 regular from each team + 1 extra from the "double team".
+      // The double team rotates so no single team bears the extra burden every week.
+      const doubleCountMap = isFriday
+        ? teamFridayDoubleCount
+        : teamSaturdayDoubleCount
 
-      const compOffEligible = morningCandidates
-        .filter(
-          (e) =>
-            stateMap.get(e.id)!.compOffPending &&
-            !stateMap.get(e.id)!.compOffUsedThisWeek
-        )
-        .sort((a, b) => {
-          // Primary: team with lowest double count gets the off slot (rotation)
-          const dA = teamDoubleCount.get(a.teamId) ?? 0
-          const dB = teamDoubleCount.get(b.teamId) ?? 0
-          if (dA !== dB) return dA - dB
-          // Secondary: highest compensation earns rest first
-          return (
-            stateMap.get(b.id)!.compensationUnits -
-            stateMap.get(a.id)!.compensationUnits
-          )
-        })
+      // The team with the fewest accumulated extra slots becomes the double team.
+      const doubleTeamId = [...teams].sort(
+        (a, b) =>
+          (doubleCountMap.get(a.id) ?? 0) - (doubleCountMap.get(b.id) ?? 0)
+      )[0].id
 
-      if (compOffEligible.length > 0) {
-        forcedCompOffRegulars.add(compOffEligible[0].id)
+      // Pre-select pool4: 1 best available regular per team + 1 extra from double team
+      const pool4: ScheduleEmployee[] = []
+      for (const team of teams) {
+        const best = shiftPool
+          .filter((e) => e.teamId === team.id)
+          .sort(
+            (a, b) =>
+              scoreRegular(stateMap.get(a.id)!) -
+              scoreRegular(stateMap.get(b.id)!)
+          )[0]
+        if (best) pool4.push(best)
       }
-    }
+      const alreadyPickedIds = new Set(pool4.map((e) => e.id))
+      const extraFromDouble = shiftPool
+        .filter((e) => e.teamId === doubleTeamId && !alreadyPickedIds.has(e.id))
+        .sort(
+          (a, b) =>
+            scoreRegular(stateMap.get(a.id)!) -
+            scoreRegular(stateMap.get(b.id)!)
+        )[0]
+      if (extraFromDouble) pool4.push(extraFromDouble)
 
-    // ── STEP 7: Assign Morning to remaining non-forced regulars ──────────────
-    if (isFriday) {
-      // req.friday.morning regulars, ≥1 must be mid/senior.
-      // Leaders are always off on Friday — not counted in morning requirement.
-      const morningTarget = req.friday.morning
+      // Assign OVN from pool4 (safety: skip those who worked Night yesterday)
+      const overnightCount = isFriday
+        ? req.friday.overnight
+        : req.saturday.overnight
+      for (let i = 0; i < overnightCount; i++) {
+        const unassigned = pool4.filter((e) => !assigned.has(e.id))
+        const safe = unassigned.filter(
+          (e) => stateMap.get(e.id)!.lastShift !== "Night"
+        )
+        const candidates = safe.length > 0 ? safe : unassigned
+        const pick = [...candidates].sort(
+          (a, b) => scoreOvernight(a) - scoreOvernight(b)
+        )[0]
+        if (pick) {
+          assignments.push({ employeeId: pick.id, shiftType: "Overnight" })
+          assigned.add(pick.id)
+        }
+      }
+
+      // Assign NGT from remaining pool4
+      const nightCount = isFriday ? req.friday.night : req.saturday.night
+      for (let i = 0; i < nightCount; i++) {
+        const candidates = pool4.filter((e) => !assigned.has(e.id))
+        const pick = [...candidates].sort(
+          (a, b) => scoreNight(a) - scoreNight(b)
+        )[0]
+        if (pick) {
+          assignments.push({ employeeId: pick.id, shiftType: "Night" })
+          assigned.add(pick.id)
+        }
+      }
+
+      // Assign MOR from remaining pool4 (mid/senior first, then by score)
+      const morningTarget = isFriday ? req.friday.morning : req.saturday.morning
       let morningFilled = 0
-
-      // First pick: prefer mid/senior (ensures seniority requirement)
       {
-        const pool = shiftPool.filter((e) => !assigned.has(e.id))
-        const seniors = pool.filter(
+        const remaining = pool4.filter((e) => !assigned.has(e.id))
+        const seniors = remaining.filter(
           (e) => e.seniority === "mid" || e.seniority === "senior"
         )
-        const pick = (seniors.length > 0 ? seniors : pool).sort(
+        const pick = (seniors.length > 0 ? seniors : remaining).sort(
           (a, b) =>
             scoreRegular(stateMap.get(a.id)!) -
             scoreRegular(stateMap.get(b.id)!)
@@ -310,12 +276,10 @@ export function generateSchedule(params: ScheduleParams): MonthSchedule {
           morningFilled++
         }
       }
-
-      // Remaining picks: any available regular
       while (morningFilled < morningTarget) {
-        const pool = shiftPool.filter((e) => !assigned.has(e.id))
-        if (pool.length === 0) break
-        const pick = [...pool].sort(
+        const remaining = pool4.filter((e) => !assigned.has(e.id))
+        if (remaining.length === 0) break
+        const pick = [...remaining].sort(
           (a, b) =>
             scoreRegular(stateMap.get(a.id)!) -
             scoreRegular(stateMap.get(b.id)!)
@@ -324,45 +288,108 @@ export function generateSchedule(params: ScheduleParams): MonthSchedule {
         assigned.add(pick.id)
         morningFilled++
       }
-    } else if (isSaturday) {
-      // req.saturday.morning regulars + 1 rotating leader (already assigned in Step 2).
-      // Leader is NOT counted in the morning requirement — treat as extra coverage.
-      const morningTarget = req.saturday.morning
-      let morningFilled = 0
 
-      // First pick: prefer mid/senior regular
-      {
-        const pool = shiftPool.filter((e) => !assigned.has(e.id))
-        const seniors = pool.filter(
-          (e) => e.seniority === "mid" || e.seniority === "senior"
-        )
-        const pick = (seniors.length > 0 ? seniors : pool).sort(
-          (a, b) =>
-            scoreRegular(stateMap.get(a.id)!) -
-            scoreRegular(stateMap.get(b.id)!)
-        )[0]
-        if (pick) {
-          assignments.push({ employeeId: pick.id, shiftType: "Morning" })
-          assigned.add(pick.id)
-          morningFilled++
-        }
-      }
-
-      // Remaining picks
-      while (morningFilled < morningTarget) {
-        const pool = shiftPool.filter((e) => !assigned.has(e.id))
-        if (pool.length === 0) break
-        const pick = [...pool].sort(
-          (a, b) =>
-            scoreRegular(stateMap.get(a.id)!) -
-            scoreRegular(stateMap.get(b.id)!)
-        )[0]
-        assignments.push({ employeeId: pick.id, shiftType: "Morning" })
-        assigned.add(pick.id)
-        morningFilled++
-      }
+      // Rotate the double team: increment its count so a different team gets it next
+      doubleCountMap.set(doubleTeamId, (doubleCountMap.get(doubleTeamId) ?? 0) + 1)
     } else {
-      // Normal day: remaining non-forced, non-comp-off regulars → Morning
+      // ── NORMAL DAY: slot-first assignment ───────────────────────────────────
+
+      // Track which teams are committed to night/overnight (diversity constraint)
+      const usedTeamsForNightSlots = new Set<string>()
+
+      // ── STEP 4: Assign Overnight ───────────────────────────────────────────
+      const overnightCount = req.normalDay.overnight
+      for (let i = 0; i < overnightCount; i++) {
+        const unassigned = shiftPool.filter((e) => !assigned.has(e.id))
+
+        // Hard constraint: never assign Overnight to someone who worked Night yesterday.
+        // Night ends midnight; Overnight starts 3am — only 3h gap, physically unsafe.
+        const safePool = unassigned.filter(
+          (e) => stateMap.get(e.id)!.lastShift !== "Night"
+        )
+        // Fallback: if everyone worked night yesterday (edge case), use full pool.
+        const candidatePool = safePool.length > 0 ? safePool : unassigned
+
+        // Enforce team diversity: pick from teams not yet in night/overnight.
+        let pick: ScheduleEmployee | undefined
+        if (usedTeamsForNightSlots.size < teams.length) {
+          const sorted = [...candidatePool]
+            .filter((e) => !usedTeamsForNightSlots.has(e.teamId))
+            .sort((a, b) => scoreOvernight(a) - scoreOvernight(b))
+          pick = sorted[0]
+        }
+        // Fallback (couldn't satisfy diversity)
+        if (!pick) {
+          const sorted = [...candidatePool].sort(
+            (a, b) => scoreOvernight(a) - scoreOvernight(b)
+          )
+          pick = sorted[0]
+        }
+
+        if (pick) {
+          assignments.push({ employeeId: pick.id, shiftType: "Overnight" })
+          assigned.add(pick.id)
+          usedTeamsForNightSlots.add(pick.teamId)
+        }
+      }
+
+      // ── STEP 5: Assign Night shifts ────────────────────────────────────────
+      const nightCount = req.normalDay.night
+      for (let i = 0; i < nightCount; i++) {
+        const unassigned = shiftPool.filter((e) => !assigned.has(e.id))
+
+        let pick: ScheduleEmployee | undefined
+        if (usedTeamsForNightSlots.size < teams.length) {
+          // Enforce team diversity: pick from teams not yet used for night/overnight.
+          const sorted = [...unassigned]
+            .filter((e) => !usedTeamsForNightSlots.has(e.teamId))
+            .sort((a, b) => scoreNight(a) - scoreNight(b))
+          pick = sorted[0]
+        }
+        if (!pick) {
+          const sorted = [...unassigned].sort(
+            (a, b) => scoreNight(a) - scoreNight(b)
+          )
+          pick = sorted[0]
+        }
+
+        if (pick) {
+          assignments.push({ employeeId: pick.id, shiftType: "Night" })
+          assigned.add(pick.id)
+          usedTeamsForNightSlots.add(pick.teamId)
+        }
+      }
+
+      // ── STEP 6: Select comp-off from morning candidates ────────────────────
+      // Comp-offs are decided AFTER night/overnight, so they never pull the best
+      // candidates away from the high-compensation slots.
+      if (forcedOffRegulars.size === 0) {
+        const morningCandidates = shiftPool.filter((e) => !assigned.has(e.id))
+
+        const compOffEligible = morningCandidates
+          .filter(
+            (e) =>
+              stateMap.get(e.id)!.compOffPending &&
+              !stateMap.get(e.id)!.compOffUsedThisWeek
+          )
+          .sort((a, b) => {
+            // Primary: team with lowest double count gets the off slot (rotation)
+            const dA = teamDoubleCount.get(a.teamId) ?? 0
+            const dB = teamDoubleCount.get(b.teamId) ?? 0
+            if (dA !== dB) return dA - dB
+            // Secondary: highest compensation earns rest first
+            return (
+              stateMap.get(b.id)!.compensationUnits -
+              stateMap.get(a.id)!.compensationUnits
+            )
+          })
+
+        if (compOffEligible.length > 0) {
+          forcedCompOffRegulars.add(compOffEligible[0].id)
+        }
+      }
+
+      // ── STEP 7: Morning to remaining non-forced regulars ───────────────────
       for (const emp of regulars) {
         if (assigned.has(emp.id)) continue
         if (forcedOffRegulars.has(emp.id) || forcedCompOffRegulars.has(emp.id))
