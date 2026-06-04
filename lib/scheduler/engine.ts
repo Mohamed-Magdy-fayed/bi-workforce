@@ -74,16 +74,10 @@ function recordShift(
 }
 
 // Lower score = higher priority for assignment.
-// Compensation fairness is the primary driver; shift-type consistency is a soft tiebreaker.
-function scoreRegular(state: EmployeeState, targetShift: ShiftType): number {
-  let score = 0
-  // Primary: equalize total compensation earned this month
-  score += state.compensationUnits * 20
-  // Secondary: prefer same shift type as yesterday (reduce switching mid-streak)
-  if (state.lastShift !== null && state.lastShift !== targetShift) score += 15
-  // Tertiary: slightly prefer fresher workers
-  score += state.consecutiveWorkDays * 1
-  return score
+// Compensation fairness is the sole driver — no consistency bonus, which would
+// let incumbents keep winning their shift type regardless of accumulated pay.
+function scoreRegular(state: EmployeeState): number {
+  return state.compensationUnits * 20 + state.consecutiveWorkDays * 1
 }
 
 function pickCandidates(
@@ -99,8 +93,7 @@ function pickCandidates(
   }
   filtered = [...filtered].sort(
     (a, b) =>
-      scoreRegular(stateMap.get(a.id)!, targetShift) -
-      scoreRegular(stateMap.get(b.id)!, targetShift)
+      scoreRegular(stateMap.get(a.id)!) - scoreRegular(stateMap.get(b.id)!)
   )
   return filtered.slice(0, count)
 }
@@ -116,14 +109,18 @@ export function generateSchedule(params: ScheduleParams): MonthSchedule {
   const stateMap = initState(employees)
   const scheduleDays: DaySchedule[] = []
 
+  // Tracks how many times each team "doubled" — had one member in night/overnight
+  // while the team's other regular took the off slot. Used to rotate fairly.
+  const teamDoubleCount = new Map<string, number>(teams.map((t) => [t.id, 0]))
+
   for (const dayInfo of days) {
     const { dateStr, dayOfWeek, isFriday, isSaturday, weekIndex } = dayInfo
     const isNormalDay = !isFriday && !isSaturday
 
-    // Reset weekly counters on Sunday
+    // Reset weekly flags on Sunday — but NOT compOffPending, so Friday comp-offs
+    // earned last week persist until actually used (not silently dropped).
     if (dayOfWeek === 0) {
       for (const state of stateMap.values()) {
-        state.compOffPending = false
         state.compOffUsedThisWeek = false
         state.workedFridayThisWeek = false
       }
@@ -146,9 +143,11 @@ export function generateSchedule(params: ScheduleParams): MonthSchedule {
       }
     }
 
-    // Stagger comp-offs: limit to 1 per day (all on Thursday to avoid losing them).
-    // Choose the most-compensated eligible employee first — they've earned the rest.
-    if (!isFriday && !isSaturday) {
+    // Hard cap: at most 1 regular off per normal day total.
+    // If someone is already forced-off (6 consecutive days), no comp-off that day.
+    // Comp-offs no longer expire on Sunday, so there's no need to drain on Thursday.
+    // Among eligible candidates, prefer the team that has "doubled" least (rotation).
+    if (isNormalDay && forcedOffRegulars.size === 0) {
       const compOffEligible = regulars
         .filter(
           (e) =>
@@ -156,20 +155,20 @@ export function generateSchedule(params: ScheduleParams): MonthSchedule {
             !stateMap.get(e.id)!.compOffUsedThisWeek &&
             !forcedOffRegulars.has(e.id)
         )
-        .sort(
-          (a, b) =>
+        .sort((a, b) => {
+          // Primary: team with lowest double count gets the off slot (rotation)
+          const dA = teamDoubleCount.get(a.teamId) ?? 0
+          const dB = teamDoubleCount.get(b.teamId) ?? 0
+          if (dA !== dB) return dA - dB
+          // Secondary: highest compensation gets the rest (fairness tiebreaker)
+          return (
             stateMap.get(b.id)!.compensationUnits -
             stateMap.get(a.id)!.compensationUnits
-        )
+          )
+        })
 
-      // On Thursday (dayOfWeek=4), drain all remaining pending comp-offs so they aren't lost.
-      // On other days, allow at most 1 comp-off, keeping total off ≤ 2.
-      const maxOffSlots = Math.max(0, 2 - forcedOffRegulars.size)
-      const maxCompOff =
-        dayOfWeek === 4 ? compOffEligible.length : Math.min(1, maxOffSlots)
-
-      for (const emp of compOffEligible.slice(0, maxCompOff)) {
-        forcedCompOffRegulars.add(emp.id)
+      if (compOffEligible.length > 0) {
+        forcedCompOffRegulars.add(compOffEligible[0].id)
       }
     }
 
@@ -360,6 +359,24 @@ export function generateSchedule(params: ScheduleParams): MonthSchedule {
 
       assignments.push({ employeeId: emp.id, shiftType: shift })
       assigned.add(emp.id)
+    }
+
+    // ── STEP 7b: Track team doubling for rotation ────────────────────────────
+    if (isNormalDay) {
+      for (const team of teams) {
+        const members = regulars.filter((e) => e.teamId === team.id)
+        const hasNightSlot = members.some((e) => {
+          const s = assignments.find((a) => a.employeeId === e.id)?.shiftType
+          return s === "Night" || s === "Overnight"
+        })
+        const hasOff = members.some((e) => {
+          const s = assignments.find((a) => a.employeeId === e.id)?.shiftType
+          return s === "Off" || s === "Comp Off"
+        })
+        if (hasNightSlot && hasOff) {
+          teamDoubleCount.set(team.id, (teamDoubleCount.get(team.id) ?? 0) + 1)
+        }
+      }
     }
 
     // ── STEP 8: Update state for all employees ───────────────────────────────
