@@ -107,7 +107,8 @@ export default function Page() {
   const handleGenerate = (
     year: number,
     month: number,
-    requirements: ShiftRequirements
+    requirements: ShiftRequirements,
+    enforceFixed5DayBlocks: boolean
   ) => {
     setGenerating(true)
     setSavedId(null)
@@ -119,6 +120,7 @@ export default function Page() {
         employees: scheduleEmployees,
         teams: scheduleTeams,
         shiftRequirements: requirements,
+        enforceFixed5DayBlocks,
       })
       setGeneratedSchedule(schedule)
     } finally {

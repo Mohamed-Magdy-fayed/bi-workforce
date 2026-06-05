@@ -35,6 +35,7 @@ export interface ScheduleParams {
   employees: ScheduleEmployee[]
   teams: ScheduleTeam[]
   shiftRequirements?: ShiftRequirements
+  enforceFixed5DayBlocks?: boolean
 }
 
 export interface ShiftAssignment {

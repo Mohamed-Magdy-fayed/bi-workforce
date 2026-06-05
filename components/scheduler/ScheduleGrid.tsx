@@ -460,6 +460,9 @@ export function ScheduleGrid({
                 <th className="min-w-16 border-b px-1 py-1 text-center font-medium text-muted-foreground">
                   Reg. Off
                 </th>
+                <th className="min-w-16 border-b px-1 py-1 text-center font-medium text-muted-foreground">
+                  MOR
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -566,14 +569,6 @@ export function ScheduleGrid({
                       )
                     })}
                     {(() => {
-                      const isNormal = !day.isFriday && !day.isSaturday
-                      if (!isNormal) {
-                        return (
-                          <td className="px-1 py-1 text-center text-muted-foreground">
-                            —
-                          </td>
-                        )
-                      }
                       const regularsOff = day.assignments.filter((a) => {
                         const emp = empMap.get(a.employeeId)
                         const effectiveShift = getEffectiveShift(
@@ -599,6 +594,21 @@ export function ScheduleGrid({
                           )}
                         >
                           {regularsOff}
+                        </td>
+                      )
+                    })()}
+                    {(() => {
+                      const morningCount = day.assignments.filter((a) => {
+                        const effectiveShift = getEffectiveShift(
+                          day.date,
+                          a.employeeId,
+                          a.shiftType as ShiftType
+                        )
+                        return effectiveShift === "Morning"
+                      }).length
+                      return (
+                        <td className="px-1 py-1 text-center font-medium text-muted-foreground">
+                          {morningCount}
                         </td>
                       )
                     })()}

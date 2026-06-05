@@ -6,6 +6,7 @@ import type {
   ScheduleEmployee,
   ScheduleParams,
   ScheduleSummary,
+  ScheduleTeam,
   ShiftAssignment,
   ShiftType,
 } from "./types"
@@ -87,6 +88,24 @@ function scoreRegular(state: EmployeeState): number {
 const OVERNIGHT_CONTINUITY_BONUS = 22
 const NIGHT_CONTINUITY_BONUS = 12
 
+function interleaveByTeam(
+  regulars: ScheduleEmployee[],
+  teams: ScheduleTeam[]
+): ScheduleEmployee[] {
+  const byTeam = new Map(
+    teams.map((t) => [t.id, regulars.filter((e) => e.teamId === t.id)])
+  )
+  const result: ScheduleEmployee[] = []
+  const maxLen = Math.max(...[...byTeam.values()].map((a) => a.length), 0)
+  for (let i = 0; i < maxLen; i++) {
+    for (const team of teams) {
+      const members = byTeam.get(team.id) ?? []
+      if (i < members.length) result.push(members[i])
+    }
+  }
+  return result
+}
+
 export function generateSchedule(params: ScheduleParams): MonthSchedule {
   const { year, month, employees, teams } = params
   const req = params.shiftRequirements ?? DEFAULT_SHIFT_REQUIREMENTS
@@ -97,6 +116,23 @@ export function generateSchedule(params: ScheduleParams): MonthSchedule {
   const days = buildMonthDays(year, month)
   const satLeaderRotation = getSaturdayLeaderRotation(days, leaders)
   const stateMap = initState(employees)
+
+  // In 5+2 mode: stagger starting positions so employees hit the rest limit
+  // on different days rather than all clustering on the same day.
+  if (params.enforceFixed5DayBlocks) {
+    const interleaved = interleaveByTeam(regulars, teams)
+    const cycleLength = 7 // 5 work + 2 off
+    interleaved.forEach((emp, i) => {
+      const state = stateMap.get(emp.id)!
+      const cyclePos = Math.floor((i * cycleLength) / interleaved.length)
+      if (cyclePos < 5) {
+        state.consecutiveWorkDays = cyclePos
+      } else {
+        state.consecutiveOffDays = cyclePos - 5 // 0 or 1
+      }
+    })
+  }
+
   const scheduleDays: DaySchedule[] = []
 
   // Tracks how many times each team "doubled" (one member in night/overnight,
@@ -128,12 +164,30 @@ export function generateSchedule(params: ScheduleParams): MonthSchedule {
     const assignments: ShiftAssignment[] = []
     const assigned = new Set<string>()
 
-    // ── STEP 1: Identify forced-off regulars (6 consecutive days) ────────────
+    // ── STEP 1: Identify forced-off regulars ─────────────────────────────────
+    // In strict 5+2 mode the cap drops to 5 consecutive days.
+    const workLimit = params.enforceFixed5DayBlocks ? 5 : 6
     const forcedOffRegulars = new Set<string>()
     for (const emp of regulars) {
       const state = stateMap.get(emp.id)!
-      if (state.consecutiveWorkDays >= 6) {
+      if (state.consecutiveWorkDays >= workLimit) {
         forcedOffRegulars.add(emp.id)
+      }
+      // In 5+2 mode: an employee who had exactly 1 off day must stay off for day 2
+      // to complete their 2-day rest block before returning to work.
+      if (params.enforceFixed5DayBlocks && state.consecutiveOffDays === 1) {
+        forcedOffRegulars.add(emp.id)
+      }
+    }
+
+    // In strict 5+2 mode: any regular who has had 2 consecutive off days must work today.
+    const forcedWorkRegulars = new Set<string>()
+    if (params.enforceFixed5DayBlocks) {
+      for (const emp of regulars) {
+        const state = stateMap.get(emp.id)!
+        if (!forcedOffRegulars.has(emp.id) && state.consecutiveOffDays >= 2) {
+          forcedWorkRegulars.add(emp.id)
+        }
       }
     }
 
@@ -390,12 +444,14 @@ export function generateSchedule(params: ScheduleParams): MonthSchedule {
       // ── STEP 6: Select comp-off from morning candidates ────────────────────
       // Comp-offs are decided AFTER night/overnight, so they never pull the best
       // candidates away from the high-compensation slots.
-      if (forcedOffRegulars.size === 0) {
+      // Skipped entirely in 5+2 mode — shifts are purely rotational, no compensation.
+      if (!params.enforceFixed5DayBlocks && forcedOffRegulars.size === 0) {
         const morningCandidates = shiftPool.filter((e) => !assigned.has(e.id))
 
         const compOffEligible = morningCandidates
           .filter(
             (e) =>
+              !forcedWorkRegulars.has(e.id) &&
               stateMap.get(e.id)!.compOffPending &&
               !stateMap.get(e.id)!.compOffUsedThisWeek
           )
@@ -426,6 +482,15 @@ export function generateSchedule(params: ScheduleParams): MonthSchedule {
       }
     }
 
+    // Forced-work catch: regulars required to work today (5+2 mode) who weren't
+    // picked into any shift slot (e.g. not in pool4 on weekends) get Morning.
+    for (const emp of regulars) {
+      if (forcedWorkRegulars.has(emp.id) && !assigned.has(emp.id)) {
+        assignments.push({ employeeId: emp.id, shiftType: "Morning" })
+        assigned.add(emp.id)
+      }
+    }
+
     // ── STEP 8: Assign Off / Comp Off to all unassigned ──────────────────────
     for (const emp of employees) {
       if (assigned.has(emp.id)) continue
@@ -434,9 +499,13 @@ export function generateSchedule(params: ScheduleParams): MonthSchedule {
 
       if (forcedOffRegulars.has(emp.id)) {
         shift = "Off"
-      } else if (forcedCompOffRegulars.has(emp.id)) {
+      } else if (
+        !params.enforceFixed5DayBlocks &&
+        forcedCompOffRegulars.has(emp.id)
+      ) {
         shift = "Comp Off"
       } else if (
+        !params.enforceFixed5DayBlocks &&
         state.compOffPending &&
         !state.compOffUsedThisWeek &&
         !isFriday &&
@@ -474,10 +543,20 @@ export function generateSchedule(params: ScheduleParams): MonthSchedule {
       const assignment = assignments.find((a) => a.employeeId === emp.id)
       const shift = assignment?.shiftType ?? "Off"
       recordShift(stateMap.get(emp.id)!, shift, isFriday, isSaturday)
+      if (params.enforceFixed5DayBlocks) {
+        const state = stateMap.get(emp.id)!
+        // Strip the Friday/Saturday multiplier added by recordShift and replace
+        // with the flat shift-type rate (Overnight 0.5, Night 0.25, Morning 0).
+        // This preserves fairness scoring without penalising specific days of week.
+        state.compensationUnits =
+          state.compensationUnits -
+          getCompensationUnits(shift, isFriday, isSaturday) +
+          getCompensationUnits(shift, false, false)
+      }
     }
 
     // ── STEP 10: Mark regulars who worked Friday for comp-off ────────────────
-    if (isFriday) {
+    if (isFriday && !params.enforceFixed5DayBlocks) {
       for (const emp of regulars) {
         const assignment = assignments.find((a) => a.employeeId === emp.id)
         if (assignment && isWorkShift(assignment.shiftType)) {

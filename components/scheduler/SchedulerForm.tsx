@@ -12,6 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
 import type {
   ScheduleEmployee,
   ScheduleTeam,
@@ -41,7 +42,8 @@ interface SchedulerFormProps {
   onGenerate: (
     year: number,
     month: number,
-    requirements: ShiftRequirements
+    requirements: ShiftRequirements,
+    enforceFixed5DayBlocks: boolean
   ) => void
 }
 
@@ -78,6 +80,7 @@ export function SchedulerForm({
   const [month, setMonth] = useState(String(now.getMonth() + 1))
   const [year, setYear] = useState(String(now.getFullYear()))
   const [req, setReq] = useState<ShiftRequirements>(DEFAULT_SHIFT_REQUIREMENTS)
+  const [enforceFixed5DayBlocks, setEnforceFixed5DayBlocks] = useState(false)
 
   const canGenerate = employees.length >= 3 && teams.length >= 1
 
@@ -104,7 +107,7 @@ export function SchedulerForm({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    onGenerate(parseInt(year), parseInt(month), req)
+    onGenerate(parseInt(year), parseInt(month), req, enforceFixed5DayBlocks)
   }
 
   return (
@@ -244,6 +247,29 @@ export function SchedulerForm({
                 {regularCount}). Some shifts may be understaffed.
               </p>
             )}
+          </div>
+
+          {/* Strict 5+2 pattern toggle */}
+          <div className="flex items-start gap-3 rounded-md border px-3 py-2.5">
+            <Switch
+              id="strict-5-2"
+              checked={enforceFixed5DayBlocks}
+              onCheckedChange={setEnforceFixed5DayBlocks}
+              className="mt-0.5 shrink-0"
+            />
+            <div>
+              <Label
+                htmlFor="strict-5-2"
+                className="cursor-pointer text-xs leading-none font-medium"
+              >
+                Strict 5+2 Pattern
+              </Label>
+              <p className="mt-1 text-[0.65rem] leading-snug text-muted-foreground">
+                Regulars work exactly 5 consecutive days then 2 days off, no
+                compensation. May increase violations if headcount is low —
+                toggle both modes to compare.
+              </p>
+            </div>
           </div>
         </form>
 
