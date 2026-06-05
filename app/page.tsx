@@ -22,6 +22,7 @@ import { ViolationBanner } from "@/components/scheduler/ViolationBanner"
 import { ExportButton } from "@/components/scheduler/ExportButton"
 import { TeamManager } from "@/components/scheduler/TeamManager"
 import { EmployeeManager } from "@/components/scheduler/EmployeeManager"
+import { TodayBanner } from "@/components/scheduler/TodayBanner"
 
 const MONTH_NAMES = [
   "January",
@@ -206,6 +207,8 @@ export default function Page() {
             Generate and manage monthly shift schedules
           </p>
         </div>
+
+        <TodayBanner />
 
         <Tabs defaultValue="generate">
           <TabsList className="mb-4">

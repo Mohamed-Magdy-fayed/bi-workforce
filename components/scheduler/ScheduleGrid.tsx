@@ -36,6 +36,7 @@ type FilterTarget =
   | { kind: "team"; value: string }
   | { kind: "role"; value: "team_leader" }
   | { kind: "dayType"; value: "friday" | "saturday" }
+  | { kind: "employee"; value: string }
 
 function filtersEqual(a: FilterTarget | null, b: FilterTarget | null): boolean {
   if (a === null && b === null) return true
@@ -78,6 +79,8 @@ export function ScheduleGrid({ schedule }: ScheduleGridProps) {
       return emp.teamId !== effectiveFilter.value
     if (effectiveFilter.kind === "role")
       return emp.role !== effectiveFilter.value
+    if (effectiveFilter.kind === "employee")
+      return emp.id !== effectiveFilter.value
     return false
   }
 
@@ -90,6 +93,8 @@ export function ScheduleGrid({ schedule }: ScheduleGridProps) {
       return emp.teamId !== effectiveFilter.value
     if (effectiveFilter.kind === "role")
       return emp.role !== effectiveFilter.value
+    if (effectiveFilter.kind === "employee")
+      return emp.id !== effectiveFilter.value
     return false
   }
 
@@ -161,7 +166,7 @@ export function ScheduleGrid({ schedule }: ScheduleGridProps) {
           <table className="border-collapse text-xs">
             <thead>
               <tr className="bg-muted/50">
-                <th className="sticky left-0 z-10 min-w-[100px] border-r border-b bg-muted/50 px-3 py-2 text-left font-medium text-muted-foreground">
+                <th className="sticky left-0 z-10 min-w-[100px] border-r border-b bg-muted px-2 py-1 text-left font-medium text-muted-foreground">
                   Date
                 </th>
                 {employees.map((emp) => {
@@ -172,12 +177,22 @@ export function ScheduleGrid({ schedule }: ScheduleGridProps) {
                     <th
                       key={emp.id}
                       className={cn(
-                        "min-w-22 border-r border-b px-2 py-2 text-center font-medium transition-opacity duration-150",
+                        "min-w-22 border-r border-b px-1 py-1 text-center font-medium transition-opacity duration-150",
                         dimmed && "opacity-25"
                       )}
                     >
                       <div className="flex flex-col items-center gap-0.5">
-                        <span>{emp.name}</span>
+                        <span
+                          className={cn(
+                            "cursor-pointer rounded px-0.5 transition-colors select-none",
+                            isActive({ kind: "employee", value: emp.id })
+                              ? "bg-muted text-foreground ring-1 ring-ring"
+                              : "hover:bg-muted/60"
+                          )}
+                          {...mkLegend({ kind: "employee", value: emp.id })}
+                        >
+                          {emp.name}
+                        </span>
                         {team && (
                           <span className="flex items-center gap-1 text-[0.55rem] font-normal text-muted-foreground">
                             <span
@@ -206,7 +221,7 @@ export function ScheduleGrid({ schedule }: ScheduleGridProps) {
                     </th>
                   )
                 })}
-                <th className="min-w-[64px] border-b px-2 py-2 text-center font-medium text-muted-foreground">
+                <th className="min-w-[64px] border-b px-1 py-1 text-center font-medium text-muted-foreground">
                   Reg. Off
                 </th>
               </tr>
@@ -231,9 +246,9 @@ export function ScheduleGrid({ schedule }: ScheduleGridProps) {
                   >
                     <td
                       className={cn(
-                        "sticky left-0 z-10 border-r px-3 py-1.5 font-medium",
-                        day.isFriday && "bg-amber-50 dark:bg-amber-950/20",
-                        day.isSaturday && "bg-orange-50 dark:bg-orange-950/20",
+                        "sticky left-0 z-10 border-r px-2 py-1 font-medium",
+                        day.isFriday && "bg-amber-50 dark:bg-amber-950",
+                        day.isSaturday && "bg-orange-50 dark:bg-orange-950",
                         !day.isFriday && !day.isSaturday && "bg-background",
                         hasViolation && "text-destructive"
                       )}
@@ -260,7 +275,7 @@ export function ScheduleGrid({ schedule }: ScheduleGridProps) {
                         <td
                           key={emp.id}
                           className={cn(
-                            "border-r px-2 py-1.5 text-center transition-opacity duration-150",
+                            "border-r px-1 py-1 text-center transition-opacity duration-150",
                             cellDimmed && "opacity-25"
                           )}
                         >
@@ -272,7 +287,7 @@ export function ScheduleGrid({ schedule }: ScheduleGridProps) {
                       const isNormal = !day.isFriday && !day.isSaturday
                       if (!isNormal) {
                         return (
-                          <td className="px-2 py-1.5 text-center text-muted-foreground">
+                          <td className="px-1 py-1 text-center text-muted-foreground">
                             —
                           </td>
                         )
@@ -287,7 +302,7 @@ export function ScheduleGrid({ schedule }: ScheduleGridProps) {
                       return (
                         <td
                           className={cn(
-                            "px-2 py-1.5 text-center font-medium",
+                            "px-1 py-1 text-center font-medium",
                             regularsOff === 0 &&
                               "text-emerald-600 dark:text-emerald-400",
                             regularsOff === 1 &&
