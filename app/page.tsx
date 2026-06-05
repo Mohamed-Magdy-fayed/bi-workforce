@@ -12,6 +12,8 @@ import type {
   ScheduleEmployee,
   ScheduleTeam,
   ShiftRequirements,
+  ShiftType,
+  EditMap,
 } from "@/lib/scheduler/types"
 import { useEmployees } from "@/hooks/useEmployees"
 import { useTeams } from "@/hooks/useTeams"
@@ -53,6 +55,7 @@ export default function Page() {
     null
   )
   const [loadingHistory, setLoadingHistory] = useState(false)
+  const [editMap, setEditMap] = useState<EditMap>({})
 
   const scheduleTeams: ScheduleTeam[] = teamsHook.teams.map((t) => ({
     id: t.id,
@@ -78,6 +81,29 @@ export default function Page() {
       role: e.role as ScheduleEmployee["role"],
     }))
 
+  function applyEdits(schedule: MonthSchedule, edits: EditMap): MonthSchedule {
+    if (Object.keys(edits).length === 0) return schedule
+    return {
+      ...schedule,
+      days: schedule.days.map((day) => ({
+        ...day,
+        assignments: day.assignments.map((a) => {
+          const key = `${day.date}::${a.employeeId}`
+          return key in edits ? { ...a, shiftType: edits[key] } : a
+        }),
+      })),
+    }
+  }
+
+  const handleCellEdit = (
+    date: string,
+    employeeId: string,
+    newShift: ShiftType
+  ) => {
+    setEditMap((prev) => ({ ...prev, [`${date}::${employeeId}`]: newShift }))
+    setSavedId(null)
+  }
+
   const handleGenerate = (
     year: number,
     month: number,
@@ -85,6 +111,7 @@ export default function Page() {
   ) => {
     setGenerating(true)
     setSavedId(null)
+    setEditMap({})
     try {
       const schedule = generateSchedule({
         year,
@@ -103,19 +130,21 @@ export default function Page() {
     if (!generatedSchedule) return
     setSaving(true)
     try {
+      const schedule = applyEdits(generatedSchedule, editMap)
       const res = await fetch("/api/schedules", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          year: generatedSchedule.year,
-          month: generatedSchedule.month,
-          hasViolations: generatedSchedule.hasViolations,
-          days: generatedSchedule.days,
+          year: schedule.year,
+          month: schedule.month,
+          hasViolations: schedule.hasViolations,
+          days: schedule.days,
         }),
       })
       if (res.ok) {
         const data = await res.json()
         setSavedId(data.id)
+        setEditMap({})
         schedulesHook.reload()
       }
     } finally {
@@ -173,6 +202,7 @@ export default function Page() {
         })
       }
 
+      setEditMap({})
       setViewingSchedule({
         id: data.id,
         year: data.year,
@@ -250,6 +280,15 @@ export default function Page() {
                           : "Save Schedule"}
                     </Button>
                     <ExportButton schedule={generatedSchedule} />
+                    {Object.keys(editMap).length > 0 && (
+                      <Badge
+                        variant="outline"
+                        className="border-blue-300 text-xs text-blue-600 dark:border-blue-700 dark:text-blue-400"
+                      >
+                        {Object.keys(editMap).length} unsaved edit
+                        {Object.keys(editMap).length !== 1 ? "s" : ""}
+                      </Badge>
+                    )}
                     {generatedSchedule.hasViolations && (
                       <Badge variant="destructive" className="text-xs">
                         {generatedSchedule.summary.totalViolations} violation
@@ -261,7 +300,11 @@ export default function Page() {
                   </div>
 
                   <ViolationBanner schedule={generatedSchedule} />
-                  <ScheduleGrid schedule={generatedSchedule} />
+                  <ScheduleGrid
+                    schedule={generatedSchedule}
+                    editMap={editMap}
+                    onCellEdit={handleCellEdit}
+                  />
 
                   {/* Balance summary */}
                   <Separator />

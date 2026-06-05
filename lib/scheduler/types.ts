@@ -81,6 +81,9 @@ export interface MonthSchedule {
   summary: ScheduleSummary
 }
 
+// key: `${date}::${employeeId}`, value: overridden shift
+export type EditMap = Record<string, ShiftType>
+
 // Internal state used only by the algorithm
 export interface EmployeeState {
   consecutiveWorkDays: number
